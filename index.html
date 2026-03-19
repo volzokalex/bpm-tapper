@@ -14,15 +14,22 @@
       <span class="bpm-label">BPM</span>
     </div>
     <p class="hint">Tap the button, press <kbd>Space</kbd> or <kbd>Enter</kbd> to the beat</p>
-    <button id="tap-btn">TAP</button>
+    <div class="tap-wrap">
+      <div id="tap-glow"></div>
+      <button id="tap-btn">TAP</button>
+    </div>
     <button id="reset-btn">Reset (R)</button>
 
     <div class="divider"></div>
 
-    <button id="listen-btn">🎵 Listen to Song</button>
-    <p id="listen-status" class="listen-status">Press to detect BPM from microphone</p>
+    <canvas id="oscilloscope" width="300" height="56"></canvas>
+    <div class="listen-buttons">
+      <button id="listen-mic-btn">🎙 Microphone</button>
+      <button id="listen-system-btn">💻 System Audio</button>
+    </div>
+    <p id="listen-status" class="listen-status">Choose how to detect BPM</p>
   </div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/meyda/5.6.8/meyda.min.js"></script>
+  <script src="meyda.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

@@ -1,0 +1,24 @@
+{
+  "name": "bpm-tapper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "meyda.min.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/volzokalex/bpm-tapper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/volzokalex/bpm-tapper/issues"
+  },
+  "homepage": "https://github.com/volzokalex/bpm-tapper#readme",
+  "dependencies": {
+    "meyda": "^5.6.3"
+  }
+}

@@ -12,7 +12,9 @@ body {
   justify-content: center;
   align-items: center;
   height: 100vh;
+  overflow: hidden;
 }
+
 
 .container {
   text-align: center;
@@ -69,7 +71,37 @@ kbd {
   color: #aaa;
 }
 
+.tap-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#tap-glow {
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  opacity: 0;
+  filter: blur(28px);
+  background: #a78bfa;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes glow-pulse {
+  0%   { opacity: 0.75; }
+  100% { opacity: 0; }
+}
+
+#tap-glow.active {
+  background: var(--glow-color, #a78bfa);
+  animation: glow-pulse var(--glow-duration, 600ms) ease-out forwards;
+}
+
 #tap-btn {
+  position: relative;
   width: 180px;
   height: 180px;
   border-radius: 50%;
@@ -95,6 +127,13 @@ kbd {
   transform: scale(0.96);
 }
 
+#tap-btn.beat-flash {
+  background-color: #2d2d2d;
+  border-color: #a78bfa;
+  box-shadow: 0 0 24px #a78bfa88;
+  transform: scale(1.04);
+}
+
 #reset-btn {
   background: none;
   border: 1px solid #333;
@@ -117,6 +156,43 @@ kbd {
   width: 60px;
   height: 1px;
   background: #222;
+}
+
+.listen-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+#listen-mic-btn,
+#listen-system-btn {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #aaa;
+  font-size: 0.9rem;
+  padding: 12px 22px;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+  outline: none;
+}
+
+#listen-mic-btn:hover,
+#listen-system-btn:hover {
+  border-color: #a78bfa;
+  color: #fff;
+}
+
+#listen-mic-btn.listening,
+#listen-system-btn.listening {
+  border-color: #f87171;
+  color: #f87171;
+  animation: listening-pulse 1s infinite;
+}
+
+#listen-mic-btn.ready,
+#listen-system-btn.ready {
+  border-color: #4ade80;
+  color: #4ade80;
 }
 
 #listen-btn {
@@ -150,6 +226,13 @@ kbd {
 @keyframes listening-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
+}
+
+#oscilloscope {
+  display: block;
+  width: 300px;
+  height: 56px;
+  opacity: 0.6;
 }
 
 .listen-status {
