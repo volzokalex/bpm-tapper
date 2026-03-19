@@ -155,7 +155,7 @@ let countdownInterval = null;
 let isListening = false;
 let activeBtn = null;
 
-let energyBuffer = [];  // bass energy over time
+let onsetBuffer = [];
 let prevSpectrum = null;
 
 const BUFFER_SIZE = 512;
@@ -164,23 +164,21 @@ const EXTENSION_MS = 10000;
 const MIN_READINGS_FOR_RESULT = 4;
 const MIC_GAIN = 5;
 
-// Smooth signal with moving average to remove noise
-function smooth(data, window = 3) {
-  return data.map((_, i) => {
-    const from = Math.max(0, i - window);
-    const slice = data.slice(from, i + 1);
-    return slice.reduce((a, b) => a + b, 0) / slice.length;
+// Detect onset peaks in signal
+function detectPeaks(signal, fps) {
+  const minDist = Math.floor(fps * 60 / 175);
+  // Smooth with window 3
+  const s = signal.map((_, i) => {
+    const lo = Math.max(0, i - 3), hi = Math.min(signal.length - 1, i + 3);
+    let sum = 0;
+    for (let j = lo; j <= hi; j++) sum += signal[j];
+    return sum / (hi - lo + 1);
   });
-}
-
-// Find peaks in energy signal with minimum distance between them
-function findPeaks(data, minDist) {
-  const smoothed = smooth(data, 4);
-  const avg = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
-  const threshold = avg * 2.0;
+  const avg = s.reduce((a, b) => a + b, 0) / s.length;
+  const thresh = avg * 1.4;
   const peaks = [];
-  for (let i = 1; i < smoothed.length - 1; i++) {
-    if (smoothed[i] > smoothed[i - 1] && smoothed[i] > smoothed[i + 1] && smoothed[i] > threshold) {
+  for (let i = 1; i < s.length - 1; i++) {
+    if (s[i] > s[i - 1] && s[i] > s[i + 1] && s[i] > thresh) {
       if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minDist) {
         peaks.push(i);
       }
@@ -189,25 +187,34 @@ function findPeaks(data, minDist) {
   return peaks;
 }
 
-// Compute BPM from peak positions, with half-tempo correction
-function bpmFromPeaks(peaks, fps) {
-  if (peaks.length < 3) return null;
-  const intervals = [];
-  for (let i = 1; i < peaks.length; i++) {
-    intervals.push(peaks[i] - peaks[i - 1]);
+// IOI histogram: count all pairwise inter-onset intervals, find most common
+function tempoFromIOI(peaks, fps) {
+  if (peaks.length < 4) return null;
+  const minLag = Math.floor(fps * 60 / 175);
+  const maxLag = Math.ceil(fps * 60 / 40);
+  const hist = new Float32Array(maxLag + 1);
+
+  for (let i = 0; i < peaks.length; i++) {
+    for (let j = i + 1; j < peaks.length; j++) {
+      const interval = peaks[j] - peaks[i];
+      if (interval > maxLag) break;
+      if (interval >= minLag) hist[interval] += 1;
+    }
   }
-  const minInterval = fps * 60 / 180; // cap at 180 BPM max
-  const maxInterval = fps * 60 / 40;
-  const valid = intervals.filter(d => d >= minInterval && d <= maxInterval);
-  if (valid.length < 2) return null;
-  const sorted = [...valid].sort((a, b) => a - b);
-  const med = sorted[Math.floor(sorted.length / 2)];
-  let bpm = Math.round(60 * fps / med);
 
-  // Half-tempo correction: if BPM > 150, check if half is more musical
-  if (bpm > 150 && bpm / 2 >= 40) bpm = Math.round(bpm / 2);
+  // Score each lag: own count + partial credit for its multiples
+  let bestLag = -1, bestScore = -1;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let score = hist[lag];
+    for (let h = 2; h <= 4; h++) {
+      const hLag = Math.round(lag * h);
+      if (hLag <= maxLag) score += hist[hLag] / h;
+    }
+    if (score > bestScore) { bestScore = score; bestLag = lag; }
+  }
 
-  return bpm;
+  if (bestLag < 0 || bestScore < 2) return null;
+  return Math.round(60 * fps / bestLag);
 }
 
 function setListenState(state, countdown) {
@@ -251,7 +258,7 @@ function stopListening(autoStopped = false) {
   audioContext = null;
   mediaStream = null;
   oscAnalyser = null;
-  energyBuffer = [];
+  onsetBuffer = [];
   prevSpectrum = null;
   isListening = false;
   setListenState(autoStopped ? 'ready' : 'idle', 0);
@@ -294,12 +301,11 @@ async function startListening(useSystemAudio) {
     gainNode.connect(oscAnalyser);
 
     const fps = audioContext.sampleRate / BUFFER_SIZE; // ~86 frames/sec
-    const minPeakDist = Math.floor(fps * 60 / 220);   // min frames between peaks (220 BPM)
-    const maxEnergy = Math.floor(fps * 10);            // keep 10 sec of data
+    const maxFrames = Math.floor(fps * 8);             // 8 sec of onset data
+    const analyzeEvery = Math.floor(fps * 1.5);        // re-analyze every 1.5 sec
     let bpmReadings = [];
     let frameCounter = 0;
-    const analyzeEvery = Math.floor(fps * 1.5);        // analyze every 1.5 sec
-    energyBuffer = [];
+    onsetBuffer = [];
     prevSpectrum = null;
 
     isListening = true;
@@ -330,38 +336,40 @@ async function startListening(useSystemAudio) {
       callback(features) {
         if (!features || !features.amplitudeSpectrum) return;
 
-        // Bass flux: positive changes in low-frequency bins (kick drum range ~60-200Hz)
         const spectrum = features.amplitudeSpectrum;
-        const bassEnd = Math.min(4, spectrum.length); // bins 0-3 ≈ 0-344Hz
-        let bassFlux = 0;
+        const binHz = audioContext.sampleRate / BUFFER_SIZE;
+
+        // Full-range spectral flux: catches kick (bass), snare (mid), hihat (high)
+        // Each contributes to beat detection — wider range = more complete picture
+        let flux = 0;
         if (prevSpectrum) {
-          for (let i = 0; i < bassEnd; i++) {
+          for (let i = 1; i < spectrum.length; i++) {
             const diff = spectrum[i] - prevSpectrum[i];
-            if (diff > 0) bassFlux += diff;
+            if (diff > 0) flux += diff;
           }
         }
         prevSpectrum = Array.from(spectrum);
 
-        energyBuffer.push(bassFlux);
+        onsetBuffer.push(flux);
         frameCounter++;
-        if (energyBuffer.length > maxEnergy) energyBuffer.shift();
+        if (onsetBuffer.length > maxFrames) onsetBuffer.shift();
 
-        // Flash button on strong bass hit
-        const avg = energyBuffer.reduce((a, b) => a + b, 0) / energyBuffer.length;
-        if (bassFlux > avg * 2.5 && bassFlux > 0.5) {
+        // Flash button on strong onset
+        const avg = onsetBuffer.reduce((a, b) => a + b, 0) / onsetBuffer.length;
+        if (flux > avg * 2.5 && flux > 0.1) {
           tapBtn.classList.add('beat-flash');
           setTimeout(() => tapBtn.classList.remove('beat-flash'), 100);
         }
 
-        // Analyze every 1.5 seconds once we have 4+ seconds of data
-        if (energyBuffer.length >= Math.floor(fps * 4) && frameCounter % analyzeEvery === 0) {
-          const peaks = findPeaks(energyBuffer, minPeakDist);
-          const bpm = bpmFromPeaks(peaks, fps);
+        // Analyze every 1.5s once we have 5s of data
+        if (onsetBuffer.length >= Math.floor(fps * 5) && frameCounter % analyzeEvery === 0) {
+          const peaks = detectPeaks(onsetBuffer, fps);
+          const bpm = tempoFromIOI(peaks, fps);
+
           if (bpm) {
             bpmReadings.push(bpm);
-            if (bpmReadings.length > 6) bpmReadings.shift();
+            if (bpmReadings.length > 5) bpmReadings.shift();
 
-            // Use median of recent readings — stable and responsive
             const sorted = [...bpmReadings].sort((a, b) => a - b);
             const result = sorted[Math.floor(sorted.length / 2)];
 

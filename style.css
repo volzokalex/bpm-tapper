@@ -228,6 +228,15 @@ kbd {
   50% { opacity: 0.6; }
 }
 
+#version {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  font-size: 0.7rem;
+  color: #333;
+  letter-spacing: 0.1em;
+}
+
 #oscilloscope {
   display: block;
   width: 300px;
