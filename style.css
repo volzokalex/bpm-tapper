@@ -112,3 +112,48 @@ kbd {
   color: #aaa;
   border-color: #555;
 }
+
+.divider {
+  width: 60px;
+  height: 1px;
+  background: #222;
+}
+
+#listen-btn {
+  background: #1a1a1a;
+  border: 2px solid #333;
+  color: #ffffff;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  padding: 14px 32px;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+  outline: none;
+}
+
+#listen-btn:hover {
+  border-color: #a78bfa;
+}
+
+#listen-btn.listening {
+  border-color: #f87171;
+  color: #f87171;
+  animation: listening-pulse 1s infinite;
+}
+
+#listen-btn.ready {
+  border-color: #4ade80;
+  color: #4ade80;
+}
+
+@keyframes listening-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.listen-status {
+  font-size: 0.8rem;
+  color: #444;
+  letter-spacing: 0.05em;
+}
