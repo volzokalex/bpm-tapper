@@ -6,6 +6,7 @@ const GLOW_COLORS = ['#a78bfa', '#c084fc', '#e879f9', '#f472b6', '#fb7185', '#f8
 let glowIndex = 0;
 let taps = [];
 let resetTimer = null;
+const MAX_TAPS = 32;
 
 export function reset() {
   taps = [];
@@ -41,7 +42,7 @@ function triggerGlow(bpm) {
 export function tap() {
   const now = Date.now();
   taps.push(now);
-  if (taps.length > 8) taps.shift();
+  if (taps.length > MAX_TAPS) taps.shift();
 
   clearTimeout(resetTimer);
   resetTimer = setTimeout(reset, 3000);
@@ -53,7 +54,14 @@ export function tap() {
   }
 
   const intervals = taps.slice(1).map((t, i) => t - taps[i]);
-  const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+
+  // Отсев выбросов: убираем интервалы дальше 30% от медианы
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const filtered = intervals.filter(x => Math.abs(x - median) / median < 0.3);
+
+  const base = filtered.length >= 2 ? filtered : intervals;
+  const avg = base.reduce((a, b) => a + b, 0) / base.length;
   const bpm = Math.round(60000 / avg);
 
   bpmDisplay.textContent = bpm;
