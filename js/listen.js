@@ -1,31 +1,30 @@
-import { detectPeaks, tempoFromIOI } from './audio.js';
+import { computeFlux, acfTempogram } from './audio.js';
 import { setAnalyser } from './oscilloscope.js';
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
-const bpmDisplay     = document.getElementById('bpm');
-const tapBtn         = document.getElementById('tap-btn');
-const listenMicBtn   = document.getElementById('listen-mic-btn');
-const listenSysBtn   = document.getElementById('listen-system-btn');
-const listenStatus   = document.getElementById('listen-status');
+const bpmDisplay   = document.getElementById('bpm');
+const listenMicBtn = document.getElementById('listen-mic-btn');
+const listenSysBtn = document.getElementById('listen-system-btn');
+const listenStatus = document.getElementById('listen-status');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const BUFFER_SIZE              = 512;
-const AUTO_STOP_MS             = 15000;
-const EXTENSION_MS             = 10000;
-const MIN_READINGS_FOR_RESULT  = 4;
-const MIC_GAIN                 = 5;
+const BUFFER_SIZE   = 1024;
+const RING_SECS     = 8;
+const UPDATE_EVERY  = 2;   // seconds between BPM recalculations
+const EMA_ALPHA     = 0.15;
+const MIC_GAIN      = 5;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let audioContext    = null;
-let meydaAnalyzer   = null;
-let mediaStream     = null;
-let autoStopTimer   = null;
-let countdownTimer  = null;
-let isListening     = false;
-let activeBtn       = null;
+let audioCtx       = null;
+let meydaAnalyzer  = null;
+let mediaStream    = null;
+let stopTimer      = null;
+let countdownTimer = null;
+let isListening    = false;
+let activeBtn      = null;
 
-// ── UI state machine ──────────────────────────────────────────────────────────
-function setListenState(state, countdown) {
+// ── UI ────────────────────────────────────────────────────────────────────────
+function setState(state, countdown = 0) {
   if (!activeBtn) return;
   activeBtn.className = '';
 
@@ -34,23 +33,18 @@ function setListenState(state, countdown) {
       listenMicBtn.textContent = '🎙 Microphone';
       listenSysBtn.textContent = '💻 System Audio';
       listenStatus.textContent = 'Choose how to detect BPM';
+      activeBtn = null;
       break;
-    case 'waiting':
-      activeBtn.textContent    = `🎧 Listening... ${countdown}s`;
+    case 'listening':
+      activeBtn.textContent    = `🎧 Listening… ${countdown}s`;
       activeBtn.classList.add('listening');
       listenStatus.textContent = activeBtn === listenMicBtn
-        ? 'Hold mic near the speaker'
-        : 'Playing music will be captured automatically';
-      break;
-    case 'analyzing':
-      activeBtn.textContent    = `🔍 Analyzing... ${countdown}s`;
-      activeBtn.classList.add('listening');
-      listenStatus.textContent = 'Locking in the tempo';
+        ? 'Hold mic near the speaker' : 'Playing music will be captured';
       break;
     case 'ready':
-      activeBtn.textContent    = '✅ BPM Ready — Try Again';
+      activeBtn.textContent    = '✅ Done — Try Again';
       activeBtn.classList.add('ready');
-      listenStatus.textContent = 'Done! Click to analyze again';
+      listenStatus.textContent = 'Click to analyze again';
       break;
     case 'error':
       listenStatus.textContent = '⚠️ Access denied — allow it in your browser';
@@ -59,165 +53,131 @@ function setListenState(state, countdown) {
 }
 
 // ── Stop ──────────────────────────────────────────────────────────────────────
-export function stopListening(autoStopped = false) {
-  if (meydaAnalyzer) { meydaAnalyzer.stop(); meydaAnalyzer = null; }
-  if (mediaStream)   mediaStream.getTracks().forEach(t => t.stop());
-  if (audioContext)  audioContext.close();
-
-  clearTimeout(autoStopTimer);
+export function stopListening(done = false) {
+  meydaAnalyzer?.stop();
+  mediaStream?.getTracks().forEach(t => t.stop());
+  audioCtx?.close();
+  clearTimeout(stopTimer);
   clearInterval(countdownTimer);
 
-  audioContext = null;
-  mediaStream  = null;
-  isListening  = false;
-
+  meydaAnalyzer = audioCtx = mediaStream = null;
+  isListening = false;
   setAnalyser(null);
-  setListenState(autoStopped ? 'ready' : 'idle', 0);
-  if (!autoStopped) activeBtn = null;
+  setState(done ? 'ready' : 'idle');
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-async function startListening(useSystemAudio) {
-  try {
-    mediaStream = await getMediaStream(useSystemAudio);
-    if (!mediaStream) return;
-
-    audioContext = new AudioContext();
-    const source   = audioContext.createMediaStreamSource(mediaStream);
-    const gainNode = audioContext.createGain();
-    gainNode.gain.value = useSystemAudio ? 1 : MIC_GAIN;
-    source.connect(gainNode);
-
-    const analyserNode = audioContext.createAnalyser();
-    analyserNode.fftSize = 1024;
-    gainNode.connect(analyserNode);
-    setAnalyser(analyserNode);
-
-    isListening = true;
-    runAnalysis(gainNode, useSystemAudio);
-
-  } catch {
-    setListenState('error', 0);
-  }
-}
-
-async function getMediaStream(useSystemAudio) {
+// ── Media stream ──────────────────────────────────────────────────────────────
+async function getStream(useSystemAudio) {
   if (!useSystemAudio) {
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     });
   }
-
-  const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg|OPR/.test(navigator.userAgent);
-  if (!isChrome) {
+  if (!/Chrome/.test(navigator.userAgent) || /Edg|OPR/.test(navigator.userAgent)) {
     listenStatus.textContent = '⚠️ System Audio works only in Chrome.';
-    setListenState('idle', 0);
-    activeBtn = null;
+    setState('idle');
     return null;
   }
-
   const stream = await navigator.mediaDevices.getDisplayMedia({
     audio: { echoCancellation: false, noiseSuppression: false, sampleRate: 44100 },
-    video: true
+    video: true,
   });
   stream.getVideoTracks().forEach(t => t.stop());
   return stream;
 }
 
-function runAnalysis(source, useSystemAudio) {
-  const fps          = audioContext.sampleRate / BUFFER_SIZE;
-  const maxFrames    = Math.floor(fps * 8);
-  const analyzeEvery = Math.floor(fps * 1.5);
-  let   bpmReadings  = [];
-  let   frameCounter = 0;
-  let   onsetBuffer  = [];
-  let   prevSpectrum = null;
-  let   secondsLeft  = AUTO_STOP_MS / 1000;
+// ── Analysis ──────────────────────────────────────────────────────────────────
+async function startListening(useSystemAudio) {
+  try {
+    mediaStream = await getStream(useSystemAudio);
+    if (!mediaStream) return;
 
-  setListenState('waiting', secondsLeft);
+    audioCtx = new AudioContext();
+    const fps      = audioCtx.sampleRate / BUFFER_SIZE;
+    const ringSize = Math.round(fps * RING_SECS);
+    const updateEveryFrames = Math.round(fps * UPDATE_EVERY);
 
-  countdownTimer = setInterval(() => {
-    secondsLeft--;
-    const state = bpmReadings.length >= MIN_READINGS_FOR_RESULT ? 'analyzing' : 'waiting';
-    setListenState(state, secondsLeft);
-  }, 1000);
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+    const gain   = audioCtx.createGain();
+    gain.gain.value = useSystemAudio ? 1 : MIC_GAIN;
+    source.connect(gain);
 
-  autoStopTimer = setTimeout(() => {
-    if (bpmReadings.length < MIN_READINGS_FOR_RESULT) {
-      secondsLeft = EXTENSION_MS / 1000;
-      listenStatus.textContent = `Need more time — keep playing! +${secondsLeft}s`;
-      autoStopTimer = setTimeout(() => stopListening(true), EXTENSION_MS);
-    } else {
-      stopListening(true);
-    }
-  }, AUTO_STOP_MS);
+    const analyserNode = audioCtx.createAnalyser();
+    analyserNode.fftSize = BUFFER_SIZE * 2;
+    gain.connect(analyserNode);
+    setAnalyser(analyserNode);
 
-  meydaAnalyzer = Meyda.createMeydaAnalyzer({
-    audioContext,
-    source,
-    bufferSize: BUFFER_SIZE,
-    featureExtractors: ['amplitudeSpectrum'],
-    callback(features) {
-      if (!features?.amplitudeSpectrum) return;
+    isListening = true;
 
-      // Spectral flux: sum of positive differences across full spectrum
-      const spectrum = features.amplitudeSpectrum;
-      let flux = 0;
-      if (prevSpectrum) {
-        for (let i = 1; i < spectrum.length; i++) {
-          const diff = spectrum[i] - prevSpectrum[i];
-          if (diff > 0) flux += diff;
+    let ring        = new Float32Array(ringSize);
+    let ringHead    = 0;
+    let ringFull    = false;
+    let prevSpec    = null;
+    let frameCount  = 0;
+    let emaBpm      = null;
+    let secsLeft    = RING_SECS;
+
+    setState('listening', secsLeft);
+    countdownTimer = setInterval(() => setState('listening', --secsLeft), 1000);
+
+    stopTimer = setTimeout(() => stopListening(true), (RING_SECS + 5) * 1000);
+
+    meydaAnalyzer = Meyda.createMeydaAnalyzer({
+      audioContext: audioCtx,
+      source: gain,
+      bufferSize: BUFFER_SIZE,
+      featureExtractors: ['amplitudeSpectrum'],
+      callback({ amplitudeSpectrum: spec }) {
+        if (!spec) return;
+
+        const flux = computeFlux(spec, prevSpec);
+        prevSpec = Array.from(spec);
+
+        ring[ringHead] = flux;
+        ringHead = (ringHead + 1) % ringSize;
+        if (ringHead === 0) ringFull = true;
+        frameCount++;
+
+        if (!ringFull || frameCount % updateEveryFrames !== 0) return;
+
+        // Flatten ring buffer into ordered array
+        const ordered = new Float32Array(ringSize);
+        for (let i = 0; i < ringSize; i++) {
+          ordered[i] = ring[(ringHead + i) % ringSize];
         }
-      }
-      prevSpectrum = Array.from(spectrum);
 
-      onsetBuffer.push(flux);
-      frameCounter++;
-      if (onsetBuffer.length > maxFrames) onsetBuffer.shift();
+        const result = acfTempogram(ordered, fps);
+        if (!result) return;
 
-      // Flash tap button on strong onset
-      const avg = onsetBuffer.reduce((a, b) => a + b, 0) / onsetBuffer.length;
-      if (flux > avg * 2.5 && flux > 0.1) {
-        tapBtn.classList.add('beat-flash');
-        setTimeout(() => tapBtn.classList.remove('beat-flash'), 100);
-      }
+        // EMA smoothing
+        emaBpm = emaBpm === null ? result.bpm : EMA_ALPHA * result.bpm + (1 - EMA_ALPHA) * emaBpm;
+        const bpm = Math.round(emaBpm);
+        const pct = Math.round(result.confidence * 100);
 
-      // Re-analyze every 1.5s once we have 5s of data
-      if (onsetBuffer.length >= Math.floor(fps * 5) && frameCounter % analyzeEvery === 0) {
-        const peaks = detectPeaks(onsetBuffer, fps);
-        const bpm   = tempoFromIOI(peaks, fps);
-        if (!bpm) return;
-
-        bpmReadings.push(bpm);
-        if (bpmReadings.length > 5) bpmReadings.shift();
-
-        const sorted = [...bpmReadings].sort((a, b) => a - b);
-        const result = sorted[Math.floor(sorted.length / 2)];
-
-        bpmDisplay.textContent = result;
+        bpmDisplay.textContent = bpm;
         bpmDisplay.classList.remove('pulse');
         void bpmDisplay.offsetWidth;
         bpmDisplay.classList.add('pulse');
         setTimeout(() => bpmDisplay.classList.remove('pulse'), 100);
+
+        listenStatus.textContent = `Confidence ${pct}%`;
       }
-    }
-  });
+    });
 
-  meydaAnalyzer.start();
-}
-
-// ── Click handler ─────────────────────────────────────────────────────────────
-function handleClick(btn, useSystemAudio) {
-  if (isListening && activeBtn === btn) {
-    stopListening(false);
-  } else if (!isListening) {
-    activeBtn = btn;
-    startListening(useSystemAudio);
+    meydaAnalyzer.start();
+  } catch {
+    setState('error');
   }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 export function initListenButtons() {
-  listenMicBtn.addEventListener('click', () => handleClick(listenMicBtn, false));
-  listenSysBtn.addEventListener('click', () => handleClick(listenSysBtn, true));
+  function handle(btn, useSystem) {
+    if (isListening && activeBtn === btn) { stopListening(false); return; }
+    if (isListening) return;
+    activeBtn = btn;
+    startListening(useSystem);
+  }
+  listenMicBtn.addEventListener('click', () => handle(listenMicBtn, false));
+  listenSysBtn.addEventListener('click', () => handle(listenSysBtn, true));
 }
