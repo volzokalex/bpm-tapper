@@ -20,6 +20,27 @@
     </div>
     <button id="reset-btn">Reset (R)</button>
 
+    <div class="tap-stats">
+      <div class="stat-block">
+        <span class="stat-label">Taps</span>
+        <span class="stat-value" id="tap-count">0</span>
+        <span class="stat-hint" id="tap-count-hint">need 3+ for result</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-label">Interval</span>
+        <span class="stat-value" id="tap-interval">—</span>
+        <span class="stat-hint">ms between taps</span>
+      </div>
+    </div>
+
+    <div class="confidence-row">
+      <span class="stat-label">Confidence</span>
+      <div class="confidence-track">
+        <div class="confidence-fill" id="confidence-bar"></div>
+      </div>
+      <span class="confidence-pct" id="confidence-val">—</span>
+    </div>
+
     <div class="divider"></div>
 
     <canvas id="oscilloscope" width="300" height="56"></canvas>

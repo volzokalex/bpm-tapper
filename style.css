@@ -152,6 +152,68 @@ kbd {
   border-color: #555;
 }
 
+.tap-stats {
+  display: flex;
+  gap: 48px;
+  justify-content: center;
+}
+
+.stat-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: #555;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1;
+}
+
+.stat-hint {
+  font-size: 0.72rem;
+  color: #444;
+}
+
+.confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 260px;
+}
+
+.confidence-track {
+  flex: 1;
+  height: 3px;
+  background: #222;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.confidence-fill {
+  height: 100%;
+  background: #a78bfa;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.confidence-pct {
+  font-size: 0.75rem;
+  color: #555;
+  width: 32px;
+  text-align: right;
+}
+
 .divider {
   width: 60px;
   height: 1px;

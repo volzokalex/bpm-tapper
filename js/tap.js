@@ -1,6 +1,11 @@
-const bpmDisplay = document.getElementById('bpm');
-const tapBtn    = document.getElementById('tap-btn');
-const tapGlow   = document.getElementById('tap-glow');
+const bpmDisplay      = document.getElementById('bpm');
+const tapBtn          = document.getElementById('tap-btn');
+const tapGlow         = document.getElementById('tap-glow');
+const tapsDisplay     = document.getElementById('tap-count');
+const tapsHint        = document.getElementById('tap-count-hint');
+const intervalDisplay = document.getElementById('tap-interval');
+const confidenceBar   = document.getElementById('confidence-bar');
+const confidenceVal   = document.getElementById('confidence-val');
 
 const GLOW_COLORS = ['#a78bfa', '#c084fc', '#e879f9', '#f472b6', '#fb7185', '#f87171'];
 let glowIndex = 0;
@@ -11,8 +16,13 @@ const MAX_TAPS = 32;
 export function reset() {
   taps = [];
   clearTimeout(resetTimer);
-  bpmDisplay.textContent = '--';
+  bpmDisplay.textContent    = '--';
   bpmDisplay.classList.remove('pulse');
+  tapsDisplay.textContent   = '0';
+  tapsHint.textContent      = 'need 3+ for result';
+  intervalDisplay.textContent = '—';
+  confidenceBar.style.width = '0%';
+  confidenceVal.textContent = '—';
 }
 
 function flashBpmDisplay() {
@@ -55,14 +65,26 @@ export function tap() {
 
   const intervals = taps.slice(1).map((t, i) => t - taps[i]);
 
-  // Отсев выбросов: убираем интервалы дальше 30% от медианы
+  // Отсев выбросов: убираем интервалы дальше 40% от медианы
   const sorted = [...intervals].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
-  const filtered = intervals.filter(x => Math.abs(x - median) / median < 0.3);
+  const filtered = intervals.filter(x => Math.abs(x - median) / median < 0.4);
 
   const base = filtered.length >= 2 ? filtered : intervals;
   const avg = base.reduce((a, b) => a + b, 0) / base.length;
   const bpm = Math.round(60000 / avg);
+
+  // Confidence: стандартное отклонение / среднее (чем меньше — тем лучше)
+  const variance = base.reduce((s, x) => s + (x - avg) ** 2, 0) / base.length;
+  const cv = Math.sqrt(variance) / avg; // coefficient of variation 0..∞
+  const confidence = Math.round(Math.max(0, Math.min(100, (1 - cv * 4) * 100)));
+
+  // Обновляем UI
+  tapsDisplay.textContent   = taps.length;
+  tapsHint.textContent      = taps.length < 3 ? 'need 3+ for result' : `${base.length} used`;
+  intervalDisplay.textContent = Math.round(avg);
+  confidenceBar.style.width = `${confidence}%`;
+  confidenceVal.textContent = `${confidence}%`;
 
   bpmDisplay.textContent = bpm;
   flashBpmDisplay();
